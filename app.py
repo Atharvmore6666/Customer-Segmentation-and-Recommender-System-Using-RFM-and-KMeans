@@ -2,79 +2,74 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import pickle
-import requests
+import gdown
 import os
-import zipfile
-from io import BytesIO
 
-# ----------------- SETUP -----------------
-st.set_page_config(page_title="🛍️ Product Recommender & RFM Segmentor", layout="centered")
+st.set_page_config(page_title="Customer Segmentation & Product Recommender", layout="wide")
+st.title("🛒 Customer Segmentation & Product Recommendation App")
 
-# ----------------- LOAD FILE FROM GDRIVE -----------------
-@st.cache_resource
+# ---------------------------
+# Load Pickle Models
+# ---------------------------
+with open("rfm_kmeans_model.pkl", "rb") as f:
+    kmeans = pickle.load(f)
+
+with open("scaler.pkl", "rb") as f:
+    scaler = pickle.load(f)
+
+# ---------------------------
+# Download item_similarity.pkl from Google Drive
+# ---------------------------
+@st.cache_data
 def download_and_load_similarity():
     file_id = "1Tn94SaJRWTK6_6zNba9wd02EJ4mz8v8n"
     url = f"https://drive.google.com/uc?id={file_id}"
-    response = requests.get(url)
-    with open("item_similarity.pkl", "wb") as f:
-        f.write(response.content)
-    return pd.read_pickle("item_similarity.pkl")
+    output = "item_similarity.pkl"
+    if not os.path.exists(output):
+        gdown.download(url, output, quiet=False)
+    return pd.read_pickle(output)
 
-@st.cache_resource
-def load_models():
-    with open('rfm_kmeans_model.pkl', 'rb') as f:
-        kmeans = pickle.load(f)
-    with open('scaler.pkl', 'rb') as f:
-        scaler = pickle.load(f)
-    return kmeans, scaler
-
-@st.cache_data
-def load_product_names():
-    return pd.read_csv("product_metadata.csv")  # Must have ProductID, ProductName
-
-# ----------------- LOAD ALL DATA -----------------
 item_sim_df = download_and_load_similarity()
-kmeans, scaler = load_models()
-product_df = load_product_names()
-product_map = dict(zip(product_df['ProductID'].astype(str), product_df['ProductName']))
-name_to_id = {v: k for k, v in product_map.items()}
+product_names = item_sim_df.index.tolist()
 
-# ----------------- APP UI -----------------
-st.title("🛍️ E-Commerce Product Recommender & Segmentor")
+# ---------------------------
+# Sidebar Options
+# ---------------------------
+option = st.sidebar.radio("Select Option", ["🔁 RFM Segmentation", "🛍️ Product Recommendation"])
 
-tab1, tab2 = st.tabs(["🎯 Recommend Products", "👤 RFM Segmentation"])
+# ---------------------------
+# RFM Prediction
+# ---------------------------
+if option == "🔁 RFM Segmentation":
+    st.header("📊 Predict Customer Segment using RFM values")
 
-# ----------------- TAB 1: RECOMMENDATION -----------------
-with tab1:
-    st.subheader("🎯 Recommend Similar Products")
-    product_name = st.selectbox("Select a product name:", sorted(name_to_id.keys()))
-    
-    if st.button("🔍 Show Recommendations"):
-        product_id = name_to_id[product_name]
-        if str(product_id) not in item_sim_df.columns:
-            st.error("No similar products found.")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        recency = st.number_input("Recency (days)", min_value=0, max_value=1000, value=30)
+    with col2:
+        frequency = st.number_input("Frequency (# of orders)", min_value=0, max_value=100, value=5)
+    with col3:
+        monetary = st.number_input("Monetary (spend)", min_value=0, max_value=10000, value=500)
+
+    if st.button("Predict Segment"):
+        rfm_input = np.array([[recency, frequency, monetary]])
+        rfm_scaled = scaler.transform(rfm_input)
+        segment = kmeans.predict(rfm_scaled)[0]
+        st.success(f"🧠 Predicted Segment: **Cluster {segment}**")
+
+# ---------------------------
+# Product Recommendation
+# ---------------------------
+elif option == "🛍️ Product Recommendation":
+    st.header("🔎 Get Product Recommendations")
+
+    selected_product = st.selectbox("Choose a product", options=product_names)
+
+    if st.button("Recommend"):
+        if selected_product in item_sim_df.index:
+            similar_products = item_sim_df[selected_product].sort_values(ascending=False).iloc[1:6]
+            st.subheader("🛍️ Top 5 Similar Products:")
+            for i, (product, score) in enumerate(similar_products.items(), 1):
+                st.write(f"**{i}. {product}** (Similarity: {score:.2f})")
         else:
-            scores = item_sim_df[str(product_id)].sort_values(ascending=False)
-            top_ids = scores.index[1:6]
-            st.success("Top 5 Recommendations:")
-            for pid in top_ids:
-                name = product_map.get(str(pid), f"Product {pid}")
-                st.markdown(f"- **{name}** (Similarity: {scores[pid]:.2f})")
-
-# ----------------- TAB 2: RFM SEGMENTATION -----------------
-with tab2:
-    st.subheader("📊 Predict Customer Segment")
-
-    r = st.number_input("Recency (days since last purchase)", min_value=0)
-    f = st.number_input("Frequency (number of purchases)", min_value=0)
-    m = st.number_input("Monetary (total spent)", min_value=0)
-
-    if st.button("📈 Predict Segment"):
-        input_data = np.array([[r, f, m]])
-        scaled = scaler.transform(input_data)
-        cluster = kmeans.predict(scaled)[0]
-        st.success(f"Predicted RFM Cluster: **Segment {cluster}**")
-
-# ----------------- FOOTER -----------------
-st.markdown("---")
-st.caption("Built with ❤️ using Streamlit | RFM Segmentation + Item Similarity Recommendation")
+            st.error("Product not found in similarity matrix.")
