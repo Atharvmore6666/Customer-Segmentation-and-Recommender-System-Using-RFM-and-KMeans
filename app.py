@@ -1,75 +1,83 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import pickle
 import gdown
 import os
+import pickle
 
-st.set_page_config(page_title="Customer Segmentation & Product Recommender", layout="wide")
-st.title("🛒 Customer Segmentation & Product Recommendation App")
+st.set_page_config(page_title="🛍️ Product Recommender & Customer Segmentation", layout="centered")
 
-# ---------------------------
-# Load Pickle Models
-# ---------------------------
-with open("rfm_kmeans_model.pkl", "rb") as f:
-    kmeans = pickle.load(f)
-
-with open("scaler.pkl", "rb") as f:
-    scaler = pickle.load(f)
-
-# ---------------------------
-# Download item_similarity.pkl from Google Drive
-# ---------------------------
+# ------------------- Load Assets ------------------- #
 @st.cache_data
+
+def load_product_metadata():
+    return pd.read_csv("product_metadata.csv")
+
+@st.cache_data
+
 def download_and_load_similarity():
-    file_id = "1Tn94SaJRWTK6_6zNba9wd02EJ4mz8v8n"
-    url = f"https://drive.google.com/uc?id={file_id}"
+    url = "https://drive.google.com/uc?id=1Tn94SaJRWTK6_6zNba9wd02EJ4mz8v8n"
     output = "item_similarity.pkl"
     if not os.path.exists(output):
         gdown.download(url, output, quiet=False)
     return pd.read_pickle(output)
 
-item_sim_df = download_and_load_similarity()
-product_names = item_sim_df.index.tolist()
+@st.cache_data
 
-# ---------------------------
-# Sidebar Options
-# ---------------------------
-option = st.sidebar.radio("Select Option", ["🔁 RFM Segmentation", "🛍️ Product Recommendation"])
+def load_cluster_model():
+    with open("scaler.pkl", "rb") as f1:
+        scaler = pickle.load(f1)
+    with open("rfm_kmeans_model.pkl", "rb") as f2:
+        kmeans = pickle.load(f2)
+    return scaler, kmeans
 
-# ---------------------------
-# RFM Prediction
-# ---------------------------
-if option == "🔁 RFM Segmentation":
-    st.header("📊 Predict Customer Segment using RFM values")
+# ------------------- App UI ------------------- #
+st.title("🛍️ Product Recommendation & Customer Segmentation")
+st.markdown("---")
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        recency = st.number_input("Recency (days)", min_value=0, max_value=1000, value=30)
-    with col2:
-        frequency = st.number_input("Frequency (# of orders)", min_value=0, max_value=100, value=5)
-    with col3:
-        monetary = st.number_input("Monetary (spend)", min_value=0, max_value=10000, value=500)
+# Load all required data
+metadata_df = load_product_metadata()
+sim_df = download_and_load_similarity()
+scaler, kmeans = load_cluster_model()
 
-    if st.button("Predict Segment"):
-        rfm_input = np.array([[recency, frequency, monetary]])
-        rfm_scaled = scaler.transform(rfm_input)
-        segment = kmeans.predict(rfm_scaled)[0]
-        st.success(f"🧠 Predicted Segment: **Cluster {segment}**")
+# Define product name column
+product_col = "Description"  # Change this if needed
 
-# ---------------------------
-# Product Recommendation
-# ---------------------------
-elif option == "🛍️ Product Recommendation":
-    st.header("🔎 Get Product Recommendations")
+# 1️⃣ Product Recommendation Module
+st.header("🎯 1. Product Recommendation")
 
-    selected_product = st.selectbox("Choose a product", options=product_names)
+product_input = st.text_input("Enter Product Name:")
 
-    if st.button("Recommend"):
-        if selected_product in item_sim_df.index:
-            similar_products = item_sim_df[selected_product].sort_values(ascending=False).iloc[1:6]
-            st.subheader("🛍️ Top 5 Similar Products:")
-            for i, (product, score) in enumerate(similar_products.items(), 1):
-                st.write(f"**{i}. {product}** (Similarity: {score:.2f})")
-        else:
-            st.error("Product not found in similarity matrix.")
+if st.button("Get Recommendations"):
+    if product_input not in sim_df.columns:
+        st.error("Product not found in similarity matrix. Please check the name.")
+    else:
+        st.subheader(f"🧠 Top 5 Similar Products to: `{product_input}`")
+        recommendations = sim_df[product_input].sort_values(ascending=False)[1:6].index.tolist()
+        for i, rec in enumerate(recommendations, start=1):
+            st.markdown(f"**{i}.** {rec}")
+
+st.markdown("---")
+
+# 2️⃣ Customer Segmentation Module
+st.header("🎯 2. Customer Segmentation")
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    recency = st.number_input("Recency (days)", min_value=0, value=30)
+with col2:
+    frequency = st.number_input("Frequency (purchases)", min_value=0, value=5)
+with col3:
+    monetary = st.number_input("Monetary (total spend)", min_value=0.0, value=200.0)
+
+if st.button("Predict Cluster"):
+    input_scaled = scaler.transform([[recency, frequency, monetary]])
+    cluster_label = kmeans.predict(input_scaled)[0]
+
+    cluster_names = {
+        0: "High-Value",
+        1: "Regular",
+        2: "Occasional",
+        3: "At-Risk"
+    }
+    label = cluster_names.get(cluster_label, f"Cluster {cluster_label}")
+    st.success(f"🎯 Predicted Customer Segment: **{label}**")
