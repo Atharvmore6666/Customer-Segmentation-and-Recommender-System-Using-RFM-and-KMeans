@@ -5,64 +5,67 @@ import pickle
 import gdown
 import os
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="E-Commerce RFM & Recommendation", layout="wide")
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="🛍️ E-Commerce Recommendation App", layout="centered")
 
-# --- DOWNLOAD LARGE FILE FROM GOOGLE DRIVE ---
-# Drive file link: https://drive.google.com/file/d/1Tn94SaJRWTK6_6zNba9wd02EJ4mz8v8n/view?usp=drive_link
-FILE_ID = '1Tn94SaJRWTK6_6zNba9wd02EJ4mz8v8n'
-ITEM_SIM_PATH = 'item_similarity.pkl'
-
+# --- DOWNLOAD LARGE FILE IF NEEDED ---
+ITEM_SIM_PATH = "item_similarity.pkl"
+GDRIVE_FILE_ID = "1Tn94SaJRWTK6_6zNba9wd02EJ4mz8v8n"
 if not os.path.exists(ITEM_SIM_PATH):
-    st.info("Downloading item similarity data...")
-    gdown.download(f'https://drive.google.com/uc?id={FILE_ID}', ITEM_SIM_PATH, quiet=False)
+    with st.spinner("Downloading large similarity matrix from Google Drive..."):
+        gdown.download(f"https://drive.google.com/uc?id={GDRIVE_FILE_ID}", ITEM_SIM_PATH, quiet=False)
 
 # --- LOAD MODELS ---
-with open('rfm_kmeans_model.pkl', 'rb') as f:
+with open("rfm_kmeans_model.pkl", "rb") as f:
     kmeans = pickle.load(f)
 
-with open('scaler.pkl', 'rb') as f:
+with open("scaler.pkl", "rb") as f:
     scaler = pickle.load(f)
 
 item_sim_df = pd.read_pickle(ITEM_SIM_PATH)
 
-# --- HEADER ---
-st.title("🛒 E-Commerce Customer Segmentation & Product Recommendation")
-st.markdown("""
-This app uses **RFM segmentation with KMeans** and **item-based collaborative filtering**  
-to classify customers and recommend products they may like.
-""")
+# --- APP HEADER ---
+st.title("🛍️ E-Commerce Recommendation & Customer Segmentation")
+st.markdown("Predict customer segment using **RFM** and recommend products using **item-based collaborative filtering**.")
 
-# --- USER INPUT FOR RFM ---
-st.sidebar.header("Enter RFM Metrics")
-recency = st.sidebar.number_input("Recency (days since last purchase)", min_value=0, max_value=1000, value=90)
-frequency = st.sidebar.number_input("Frequency (total purchases)", min_value=1, max_value=100, value=5)
-monetary = st.sidebar.number_input("Monetary (total spent)", min_value=1, value=500)
+# --- TABS: Product Recommendation | Customer Segmentation ---
+tab1, tab2 = st.tabs(["🎯 Product Recommendation", "👤 Customer Segmentation"])
 
-rfm_input = pd.DataFrame([[recency, frequency, monetary]], columns=['Recency', 'Frequency', 'Monetary'])
+# ========== TAB 1: PRODUCT RECOMMENDATION ==========
+with tab1:
+    st.subheader("🔎 Recommend Similar Products")
+    product_name = st.selectbox("Enter or select a product you like:", item_sim_df.index.tolist())
 
-# --- SEGMENTATION ---
-rfm_scaled = scaler.transform(rfm_input)
-cluster = kmeans.predict(rfm_scaled)[0]
+    def recommend_items(product_name, top_n=5):
+        if product_name not in item_sim_df.columns:
+            return []
+        scores = item_sim_df[product_name].sort_values(ascending=False)
+        return scores.iloc[1:top_n + 1].index.tolist()
 
-st.success(f"🧠 Based on your RFM data, this customer belongs to **Segment {cluster}**.")
+    if st.button("🔍 Get Recommendations"):
+        recs = recommend_items(product_name)
+        if recs:
+            st.success(f"Top 5 products similar to **{product_name}**:")
+            for i, item in enumerate(recs, 1):
+                st.markdown(f"**{i}.** {item}")
+        else:
+            st.warning("No similar products found.")
 
-# --- PRODUCT RECOMMENDATION ---
-st.header("🎯 Product Recommendations")
+# ========== TAB 2: CUSTOMER SEGMENTATION ==========
+with tab2:
+    st.subheader("📊 Predict Customer Segment")
+    with st.form("rfm_form"):
+        recency = st.number_input("Recency (days since last purchase)", min_value=0, max_value=1000, value=60)
+        frequency = st.number_input("Frequency (number of purchases)", min_value=1, value=5)
+        monetary = st.number_input("Monetary (total amount spent)", min_value=1, value=500)
+        submitted = st.form_submit_button("Predict Segment")
 
-# Show top N similar items for a sample product
-sample_product = st.selectbox("Choose a product you like:", item_sim_df.index.tolist())
+    if submitted:
+        rfm_df = pd.DataFrame([[recency, frequency, monetary]], columns=["Recency", "Frequency", "Monetary"])
+        rfm_scaled = scaler.transform(rfm_df)
+        segment = int(kmeans.predict(rfm_scaled)[0])
+        st.success(f"🎯 This customer belongs to **Segment {segment}**.")
 
-def recommend_items(product_name, top_n=5):
-    if product_name not in item_sim_df.columns:
-        return ["No similar items found."]
-    sim_scores = item_sim_df[product_name].sort_values(ascending=False)
-    recommendations = sim_scores.iloc[1:top_n+1].index.tolist()
-    return recommendations
-
-recommendations = recommend_items(sample_product)
-
-st.subheader(f"Recommended products similar to **{sample_product}**:")
-for i, item in enumerate(recommendations, start=1):
-    st.write(f"{i}. {item}")
-
+# --- FOOTER ---
+st.markdown("---")
+st.caption("Built with ❤️ using Streamlit | RFM Segmentation + Item-Based Recommendations")
